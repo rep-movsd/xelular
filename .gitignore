@@ -1,0 +1,6 @@
+*.o
+*.gch
+.metadata/*
+gluttest/
+Debug/
+bin/
