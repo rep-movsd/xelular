@@ -7,7 +7,7 @@ struct TXel
 {
     int state0, state1;            // current and new state
     TFXY pt0, pt1;                 // X Y of the current and next point in this XEL 
-    TMany<6, TXY> ptI;             // P, Q of new xels which have got interpolated
+    TMany<60, TXY> ptI;             // P, Q of new xels which have got interpolated
     TXY ptNew;                     // P, Q of xels into which this point has gone
     float fIntensity;              // Image "friction"
     int iChosen;               
@@ -64,7 +64,7 @@ public:
 
     float m_fMajor, m_fMinor;
     int m_iTop, m_iLeft, m_iRight, m_iBottom;
-    T2DArr<TXel> m_pArr;
+    T2DView<TXel> m_pArr;
     int m_nGens;
 
     //int mi, mj;

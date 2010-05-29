@@ -46,23 +46,28 @@ GPU TFXY kGetIntrinsicForce(TMany<6, TXel> &nears, TXel &xel)
 //Calculates the new point for the given xel based on the inertial tensor rule
 GPU void kEvolve(TMany<6, TXel> &nears, TXel &xel)
 {
+    TFXY old = xel.pt0;
     xel.pt1 = xel.pt0;
 
     if(nears.size && xel.state0 == xMovable)
     {
         TFXY ptfIntrinsic = kGetIntrinsicForce(nears, xel);
-        TFXY ptfImgForce = xel.ptfImgForce * g_fMinor;
+        //TFXY ptfImgForce = xel.ptfImgForce * g_fMinor;
 
         //Take only radial component of image force
         // as f = (f.v / v.v) * v
 
-        float vv = ptfIntrinsic.dot(ptfIntrinsic) + 0.01f;
-        float fv = ptfImgForce.dot(ptfIntrinsic);
-        ptfImgForce = ptfIntrinsic * (fv / vv);
+//         float vv = ptfIntrinsic.dot(ptfIntrinsic) + 0.1f;
+//         float fv = ptfImgForce.dot(ptfIntrinsic);
+//         ptfImgForce = ptfIntrinsic * (fv / vv);
 
-        TFXY ptfTotal = ptfIntrinsic * 0.1f + ptfImgForce * 0.01f;
+        TFXY ptfTotal = ptfIntrinsic;// * 0.1f;// + ptfImgForce * 0.1f;
         xel.pt1 += ptfTotal;
     }
+
+    assert(old == xel.pt0);
+
+
 }
 //////////////////////////////////////////////////////////////////////////
 

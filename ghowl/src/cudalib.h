@@ -23,6 +23,7 @@
 #include <functional>
 #include <set>
 #include <map>
+#include <stddef.h>
 
 using namespace std;
 
@@ -46,8 +47,8 @@ typedef TCoOrd3D<int> TXYZ;
 typedef TCoOrd3D<float> TFXYZ;
 
 template<int N, class T> class TMany;
-template<typename T> struct T2DArr;
-template<typename T> struct T3DArr;
+template<typename T> struct T2DView;
+template<typename T> struct T3DView;
 
 // CUDA Emulation stuff
 #include "cudaemu.h"
@@ -103,7 +104,7 @@ template<typename T> struct T3DArr;
 //////////////////////////////////////////////////////////////////////////
 
 #ifdef __CUDACC__
-    #define DECL_CUDA_COPY_CTOR(X) GPU_CPU X(const X& other) { *this = other; } 
+    #define DECL_CUDA_COPY_CTOR(X) GPU_CPU X(const X& that) { *this = that; } 
 #else
     #define DECL_CUDA_COPY_CTOR(X) ;
 #endif
@@ -131,8 +132,19 @@ public:
 };
 //////////////////////////////////////////////////////////////////////////
 
+// Helper class to retrieve device parameters
+struct TCudaDeviceProp : public cudaDeviceProp
+{
+    TCudaDeviceProp()
+    {
+        cudaGetDeviceProperties(this, 0);
+    }
+};
+
 // Global TCudaException variable which can be assigned to the return values of CUDA API calls
 extern TCudaException g_e;
+extern TCudaDeviceProp g_devProps;
+
 //////////////////////////////////////////////////////////////////////////
 
 //CUDA friendly analogs of the STL numeric functors defined via macros
@@ -163,7 +175,7 @@ template<typename T> struct TCoOrd2D
     DECL_CUDA_COPY_CTOR(TCoOrd2D);
 
     // Default ctor
-    GPU_CPU TCoOrd2D() : x(0), y(0)
+    GPU_CPU TCoOrd2D() : x(), y()
     {
     }
     //////////////////////////////////////////////////////////////////////////
@@ -174,8 +186,14 @@ template<typename T> struct TCoOrd2D
     }
     //////////////////////////////////////////////////////////////////////////
 
+    template<class T2>
+    GPU_CPU TCoOrd2D(T2 ax, T2 ay) : x(T(ax)), y(T(ay))
+    {
+    }
+    //////////////////////////////////////////////////////////////////////////
+
     //Construct from any type with x and y members
-    template<typename T2> GPU_CPU explicit TCoOrd2D(const T2 &p)
+    template<typename T2> GPU_CPU TCoOrd2D(const T2 &p)
     {
         *this = p;
     }
@@ -193,9 +211,12 @@ template<typename T> struct TCoOrd2D
     // Y major comparision operator ( 1000000 may be too less )
     GPU_CPU bool operator <(const TCoOrd2D &o) const
     {
-        if(y != o.y)
-            return y < o.y;
-        return x < o.x;
+        int i = y * 1000000 + x;
+        int j = o.y * 1000000 + o.x;
+        return i < j;
+//         if(y != o.y)
+//             return y < o.y;
+//         return x < o.x;
     }
     //////////////////////////////////////////////////////////////////////////
 
@@ -225,8 +246,9 @@ template<typename T> struct TCoOrd2D
     GPU_CPU void rotate(float fTheta)
     {
         float fC = cos(fTheta), fS = sin(fTheta);
-        x = x * fC + y * fS;
-        y = y * fC - x * fS;
+        T nx = x * fC + y * fS;
+        T ny = y * fC - x * fS;
+        x = nx; y = ny;
     }
     //////////////////////////////////////////////////////////////////////////
 
@@ -260,36 +282,34 @@ template<typename T> struct TCoOrd2D
     //////////////////////////////////////////////////////////////////////////
 
     // Operators defined with macros
-    #define DECL_EQUALITY_OP(OP) GPU_CPU bool operator OP (const TCoOrd2D &o) const { return o.x OP x && o.y OP y; }
-
     #define DECL_OPEQ_OPS(OP) \
-        template<typename T2> GPU_CPU TCoOrd2D &operator OP (const TCoOrd2D<T2> &o) { x OP (T2)o.x; y OP (T2)o.y; return *this; } \
-        template<typename TOperand> GPU_CPU TCoOrd2D &operator OP (const TOperand &o) { x OP o; y OP o; return *this; }
+        template<typename T2> GPU_CPU inline TCoOrd2D &operator OP (const TCoOrd2D<T2> &o) { x OP (T2)o.x; y OP (T2)o.y; return *this; } \
+        template<typename TOperand> GPU_CPU inline TCoOrd2D &operator OP (const TOperand &o) { x OP o; y OP o; return *this; }
 
     #define DECL_BINARY_OPS(OP) \
-        template<typename T2> GPU_CPU TCoOrd2D operator OP (const TCoOrd2D<T2> &o) const { return TCoOrd2D(x OP (T2)o.x, y OP (T2)o.y);} \
-        template<typename TOperand> GPU_CPU TCoOrd2D operator OP (const TOperand &o) const { return TCoOrd2D(x OP o, y OP o);}
+        template<typename T2> GPU_CPU inline TCoOrd2D operator OP (const TCoOrd2D<T2> &o) const { return TCoOrd2D(x OP (T2)o.x, y OP (T2)o.y);} \
+        template<typename TOperand> GPU_CPU inline TCoOrd2D operator OP (const TOperand &o) const { return TCoOrd2D(x OP o, y OP o);}
 
-    DECL_EQUALITY_OP(==);
-    DECL_EQUALITY_OP(!=);
+    GPU_CPU inline bool operator ==(const TCoOrd2D &o) const { return o.x == x && o.y == y; }
+    GPU_CPU inline bool operator !=(const TCoOrd2D &o) const { return !(o == *this); }
+    
+    DECL_OPEQ_OPS(+=)
+    DECL_OPEQ_OPS(-=)
+    DECL_OPEQ_OPS(*=)
+    DECL_OPEQ_OPS(/=)
+    DECL_OPEQ_OPS(%=)
+    DECL_OPEQ_OPS(&=)
+    DECL_OPEQ_OPS(|=)
+    DECL_OPEQ_OPS(^=)
 
-    DECL_OPEQ_OPS(+=);
-    DECL_OPEQ_OPS(-=);
-    DECL_OPEQ_OPS(*=);
-    DECL_OPEQ_OPS(/=);
-    DECL_OPEQ_OPS(%=);
-    DECL_OPEQ_OPS(&=);
-    DECL_OPEQ_OPS(|=);
-    DECL_OPEQ_OPS(^=);
-
-    DECL_BINARY_OPS(+);
-    DECL_BINARY_OPS(-);
-    DECL_BINARY_OPS(*);
-    DECL_BINARY_OPS(/);
-    DECL_BINARY_OPS(%);
-    DECL_BINARY_OPS(&);
-    DECL_BINARY_OPS(|);
-    DECL_BINARY_OPS(^);
+    DECL_BINARY_OPS(+)
+    DECL_BINARY_OPS(-)
+    DECL_BINARY_OPS(*)
+    DECL_BINARY_OPS(/)
+    DECL_BINARY_OPS(%)
+    DECL_BINARY_OPS(&)
+    DECL_BINARY_OPS(|)
+    DECL_BINARY_OPS(^)
 
     #undef DECL_EQUALITY_OP
     #undef DECL_OPEQ_OPS
@@ -383,26 +403,26 @@ template<typename T> struct TCoOrd3D
     template<typename T2> GPU_CPU TCoOrd3D operator OP (const TCoOrd3D<T2> &o)  const { return TCoOrd3D(x OP o.x, y OP o.y, z OP o.z);} \
     template<typename TOperand> GPU_CPU TCoOrd3D operator OP (const TOperand &o) const { return TCoOrd3D(x OP o, y OP o, z OP o);}
 
-    DECL_EQUALITY_OP(==);
-    DECL_EQUALITY_OP(!=);
+    DECL_EQUALITY_OP(==)
+    DECL_EQUALITY_OP(!=)
 
-    DECL_OPEQ_OP(+=);
-    DECL_OPEQ_OP(-=);
-    DECL_OPEQ_OP(*=);
-    DECL_OPEQ_OP(/=);
-    DECL_OPEQ_OP(%=);
-    DECL_OPEQ_OP(&=);
-    DECL_OPEQ_OP(|=);
-    DECL_OPEQ_OP(^=);
+    DECL_OPEQ_OP(+=)
+    DECL_OPEQ_OP(-=)
+    DECL_OPEQ_OP(*=)
+    DECL_OPEQ_OP(/=)
+    DECL_OPEQ_OP(%=)
+    DECL_OPEQ_OP(&=)
+    DECL_OPEQ_OP(|=)
+    DECL_OPEQ_OP(^=)
 
-    DECL_BINARY_OP(+);
-    DECL_BINARY_OP(-);
-    DECL_BINARY_OP(*);
-    DECL_BINARY_OP(/);
-    DECL_BINARY_OP(%);
-    DECL_BINARY_OP(&);
-    DECL_BINARY_OP(|);
-    DECL_BINARY_OP(^);
+    DECL_BINARY_OP(+)
+    DECL_BINARY_OP(-)
+    DECL_BINARY_OP(*)
+    DECL_BINARY_OP(/)
+    DECL_BINARY_OP(%)
+    DECL_BINARY_OP(&)
+    DECL_BINARY_OP(|)
+    DECL_BINARY_OP(^)
 
     #undef DECL_BINARY_OP
     #undef DECL_OPEQ_OP
@@ -450,6 +470,8 @@ public:
 
 struct TPitchPtr
 {
+    TPitchPtr(){};
+    DECL_CUDA_COPY_CTOR(TPitchPtr);
     char *ptr;
     int pitch;    ///< Pitch of allocated memory in bytes
     int w;    ///< Logical width of allocation in elements
@@ -458,20 +480,20 @@ struct TPitchPtr
     bool bOnDevice;
 
     template<typename T>  
-    GPU_CPU T3DArr<T> p3d() {return T3DArr<T>(*this);}
+    GPU_CPU T3DView<T> p3d() {return T3DView<T>(*this);}
     
     template<typename T>  
-    GPU_CPU T2DArr<T> p2d(int iz = 0) {return T2DArr<T>(*this, iz);}
+    GPU_CPU T2DView<T> p2d(int iz = 0) {return T2DView<T>(*this, iz);}
 };
 //////////////////////////////////////////////////////////////////////////
 
-template<typename T> struct T2DArr : public TPitchPtr
+template<typename T> struct T2DView : public TPitchPtr
 {
-    DECL_CUDA_COPY_CTOR(T2DArr);
+    DECL_CUDA_COPY_CTOR(T2DView);
 
-    GPU_CPU T2DArr() {};
+    GPU_CPU T2DView() {};
 
-    GPU_CPU T2DArr(const TPitchPtr &p, int z = 0): TPitchPtr(p)
+    GPU_CPU T2DView(const TPitchPtr &p, int z = 0): TPitchPtr(p)
     {
         ptr += pitch * h * z;
     }
@@ -489,16 +511,16 @@ template<typename T> struct T2DArr : public TPitchPtr
 //////////////////////////////////////////////////////////////////////////
 
 // "Clamped" array - clamps out of range indexes to specified limits
-template<typename T> struct T2DClipArr : public TPitchPtr
+template<typename T> struct T2DClipView : public TPitchPtr
 {
 private:
-    T2DClipArr(){};
+    T2DClipView(){};
     
 public:
     int minx, miny, maxx, maxy;
-    DECL_CUDA_COPY_CTOR(T2DClipArr);
+    DECL_CUDA_COPY_CTOR(T2DClipView);
 
-    GPU_CPU T2DClipArr(const TPitchPtr &p, int aminx, int amaxx, int aminy, int amaxy, int z = 0): 
+    GPU_CPU T2DClipView(const TPitchPtr &p, int aminx, int amaxx, int aminy, int amaxy, int z = 0): 
         TPitchPtr(p), minx(aminx), maxx(amaxx), miny(aminy), maxy(amaxy)  
     {
         ptr += pitch * h * z;
@@ -512,24 +534,25 @@ public:
 };
 //////////////////////////////////////////////////////////////////////////
 
-// "Nulled" array - returns a specified value for out of bound values
-template<typename T> struct T2DNulledArr : public TPitchPtr
+// "Default" array - returns a specified value for out of bound indices
+template<typename T> struct T2DDefView : public TPitchPtr
 {
 private:
-    T2DNulledArr(){};
+    T2DDefView(){};
     T defaultVal;
 
 public:
     int minx, maxx, miny, maxy;
-    DECL_CUDA_COPY_CTOR(T2DNulledArr);
+    DECL_CUDA_COPY_CTOR(T2DDefView);
 
-    GPU_CPU T2DNulledArr(const TPitchPtr &p, int aminx, int amaxx, int aminy, int amaxy, T aDefaultVal = T(), int z = 0): 
-    TPitchPtr(p), defaultVal(aDefaultVal), minx(aminx), maxx(amaxx), miny(aminy), maxy(amaxy)
+    GPU_CPU T2DDefView(const TPitchPtr &p, int aminx, int amaxx, int aminy, int amaxy, T aDefaultVal = T(), int z = 0): 
+    TPitchPtr(p), minx(aminx), maxx(amaxx), miny(aminy), maxy(amaxy)
     {
+        defaultVal = aDefaultVal;
         ptr += pitch * h * z;
     };
 
-    GPU_CPU const T& operator[](TXY p) const
+    GPU_CPU T operator[](TXY p) const
     {
         if(p.x < minx || p.x >= maxx || p.y < miny || p.y >= maxy) 
             return defaultVal;
@@ -539,18 +562,17 @@ public:
 };
 //////////////////////////////////////////////////////////////////////////
 
-
 // "Wrapped" array - wraps out of range values by modulus
-template<typename T> struct T2DWrapArr : public TPitchPtr
+template<typename T> struct T2DWrapView : public TPitchPtr
 {
 private:
-    T2DWrapArr(){};
+    T2DWrapView(){};
 
 public:
     int maxx, maxy;
-    DECL_CUDA_COPY_CTOR(T2DWrapArr);
+    DECL_CUDA_COPY_CTOR(T2DWrapView);
 
-    GPU_CPU T2DWrapArr(const TPitchPtr &p, int amaxx, int amaxy, int z = 0): 
+    GPU_CPU T2DWrapView(const TPitchPtr &p, int amaxx, int amaxy, int z = 0): 
     TPitchPtr(p), maxx(amaxx), maxy(amaxy)  
     {
         ptr += pitch * h * z;
@@ -564,26 +586,25 @@ public:
 };
 //////////////////////////////////////////////////////////////////////////
 
-
-template<typename T> struct T3DArr : public TPitchPtr
+template<typename T> struct T3DView : public TPitchPtr
 {
-    DECL_CUDA_COPY_CTOR(T3DArr);
+    DECL_CUDA_COPY_CTOR(T3DView);
 
-    GPU_CPU T3DArr(const TPitchPtr &p) : TPitchPtr(p)
+    GPU_CPU T3DView(const TPitchPtr &p) : TPitchPtr(p)
     {
     }
     //////////////////////////////////////////////////////////////////////////
 
-    GPU_CPU T2DArr<T> operator[](int iz)
+    GPU_CPU T2DView<T> operator[](int iz)
     {
-        return T2DArr<T>(*this, iz);
+        return T2DView<T>(*this, iz);
     }
     //////////////////////////////////////////////////////////////////////////
 
     GPU_CPU T& operator[](const TXYZ &p)
     {
         //assert(p.z > -1 &&  p.w > -1 && p.h > -1 && p.z < d && p.y < h && p.x < w);
-        return T2DArr<T>(*this, p.z)[p.y][p.x];
+        return T2DView<T>(*this, p.z)[p.y][p.x];
     }
     //////////////////////////////////////////////////////////////////////////
 };
@@ -663,8 +684,8 @@ protected:
         }
         else if(from.height() > 1)
         {
-            // Maximum pitch is 262144 ( lets not push it that far )
-            if(from.pitch() < 65536 && to.pitch() < 65536)
+            // Check for maximum pitch 
+            if(from.pitch() < (int)g_devProps.memPitch && to.pitch() < (int)g_devProps.memPitch)
                 g_e = cudaMemcpy2D(to.ptr(), to.pitch(), from.ptr(), from.pitch(), cbRow, to.height(), kind);
             else // memcpy row by row
             {
@@ -712,35 +733,35 @@ public:
     virtual ~TArray(){}
     //////////////////////////////////////////////////////////////////////////
 
-    template<typename T2> void assign(const T2 &other)
+    template<typename T2> void assign(const T2 *that)
     {
         // If this array is empty then resize it
         if(!m_pBuf)
         {
-            m_dim = other.m_dim;
+            m_dim = that->m_dim;
             resize();
         }
 
         if(isDeviceBuf())
         {
-            if(other.isDeviceBuf())   // Device to device
+            if(that->isDeviceBuf())   // Device to device
             {
-                doCopy<TArray, T2, cudaMemcpyDeviceToDevice>(*this, other);
+                doCopy<TArray, T2, cudaMemcpyDeviceToDevice>(*this, *that);
             }
             else                    // Host to device
             {
-                doCopy<TArray, T2, cudaMemcpyHostToDevice>(*this, other);
+                doCopy<TArray, T2, cudaMemcpyHostToDevice>(*this, *that);
             }
         }
         else
         {
-            if(other.isDeviceBuf())   // Device to Host
+            if(that->isDeviceBuf())   // Device to Host
             {
-                doCopy<TArray, T2, cudaMemcpyDeviceToHost>(*this, other);
+                doCopy<TArray, T2, cudaMemcpyDeviceToHost>(*this, *that);
             }
             else                    // Host to Host
             {
-                doCopy<TArray, T2, cudaMemcpyHostToHost>(*this, other);
+                doCopy<TArray, T2, cudaMemcpyHostToHost>(*this, *that);
             }
         }
     }
@@ -794,8 +815,8 @@ public:
 
     #define DECL_GETTER(TYPE, FNNAME, RET_EXPR) inline TYPE FNNAME() const { return RET_EXPR; }
 
-    DECL_GETTER(T3DArr<T>, p3d, data());
-    DECL_GETTER(T2DArr<T>, p2d, data());
+    DECL_GETTER(T3DView<T>, p3d, data());
+    DECL_GETTER(T2DView<T>, p2d, data());
     DECL_GETTER(T*, ptr, m_pBuf);
     DECL_GETTER(int, width, m_dim.width);
     DECL_GETTER(int, height, m_dim.height);
@@ -842,7 +863,7 @@ protected:
         m_v.resize(this->m_cbPitch * iy * iz);
         this->m_pBuf = (T*)&m_v[0];
 
-        T3DArr<T> pArr(this->data());
+        T3DView<T> pArr(this->data());
         LOOP_ZYX(ix, iy, iz)
         {
             T* p = &(pArr[z][y][x]);
@@ -852,6 +873,8 @@ protected:
     //////////////////////////////////////////////////////////////////////////
 
 public:
+
+    static const bool isDevice = 0;
 
     virtual bool isDeviceBuf(void) const 
     { 
@@ -878,26 +901,26 @@ public:
      // Default copy ctor has to be overridden
     explicit TCPUArray(const TCPUArray &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     explicit TCPUArray(const TArray<T> &that) : TArray<T>()
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     // Default = operator has to be overridden
     void operator=(const TCPUArray &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     void operator=(const TArray<T> &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
@@ -970,6 +993,8 @@ protected:
 
 public:
 
+    static const bool isDevice = 1;
+
     virtual bool isDeviceBuf(void) const 
     { 
         return true; 
@@ -996,90 +1021,38 @@ public:
     // Default copy ctor has to be overridden
     explicit TGPUArray(const TGPUArray &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     explicit TGPUArray(const TArray<T> &that) : TArray<T>()
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     // Default assignment operator has to be overridden
     void operator=(const TGPUArray &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
     
     void operator=(const TArray<T> &that)
     {
-        assign(that);
+        assign(&that);
     }
     //////////////////////////////////////////////////////////////////////////
 
     // Free allocated memory 
     virtual ~TGPUArray()
     {
-        g_e.setContext(__FUNCTION__);
-        g_e = cudaFree(this->m_pBuf);
+        cudaFree(this->m_pBuf);
     }
     //////////////////////////////////////////////////////////////////////////
-
 };
 //////////////////////////////////////////////////////////////////////////
 
-//////////////////////////////////////////////////////////////////////////
-// CUDA thread helpers
-//////////////////////////////////////////////////////////////////////////
-
-// Get the absolute linear identity of a thread
-GPU int getLinearThreadIndex();
-//////////////////////////////////////////////////////////////////////////
-
-GPU int getThreadX(int nMax);
-//////////////////////////////////////////////////////////////////////////
- 
-// Get the virtual X and Y IDs of a thread given the virtual width and height
-GPU TXY getThreadXY(int w, int h);
-//////////////////////////////////////////////////////////////////////////
-
-GPU TXY getUnboundedThreadXY(int w);
-//////////////////////////////////////////////////////////////////////////
-
-GPU TXYZ getThreadXYZ(int w, int h, int d);
-//////////////////////////////////////////////////////////////////////////
-
-void getBlockGridSizes(int nElems, int &nBlocks, int &nThreadsPerBlock);
-//////////////////////////////////////////////////////////////////////////
-
-//////////////////////////////////////////////////////////////////////////
-// Misc functions
-//////////////////////////////////////////////////////////////////////////
-
-// Get the 4 box co-ordinates that enclose a pel co-ordinate
-template<typename T>
-GPU_CPU void getBoundingPoints(T& pt, TCoOrd2D<int> bounds[4])
-{
-    bounds[0].x = (int)pt.x;
-    bounds[0].y = (int)pt.y;
-    bounds[1].x = (int)pt.x;
-    bounds[1].y = (int)pt.y - 1;
-    bounds[2].x = (int)pt.x + 1;
-    bounds[2].y = (int)pt.y - 1;
-    bounds[3].x = (int)pt.x + 1;
-    bounds[3].y = (int)pt.y;
-}
-///////////////////////////////////////////////////////////////////
-
-// Floating point compare ( no conditionals ) returns -1, 0 or 1 for < = or >
-template<typename T> 
-GPU_CPU int compare(const T a, const T b, const T epsilon = T(1)/T(10000))
-{
-    return int((a - b) / epsilon);
-}
-//////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////
 // Bitmap handling
@@ -1088,10 +1061,19 @@ GPU_CPU int compare(const T a, const T b, const T epsilon = T(1)/T(10000))
 //////////////////////////////////////////////////////////////////////////
 // Bitmap class is a 3d array consisting of 1 or 3 planes 
 //////////////////////////////////////////////////////////////////////////
+
 template <typename T> class TBitmap : public TCPUArray<T>
 {
-#pragma pack(push, 2)
 
+#ifndef _MSC_VER
+#define PACK_GCC __attribute__((packed))
+#else
+#define PACK_GCC
+#endif
+
+#pragma pack(push)
+
+#pragma pack(1)
     struct BMPFILEHEADER
     {
         unsigned short bfType;
@@ -1099,7 +1081,7 @@ template <typename T> class TBitmap : public TCPUArray<T>
         unsigned short bfReserved1;
         unsigned short bfReserved2;
         size_t bfOffBits;
-    };
+    } PACK_GCC;
     //////////////////////////////////////////////////////////////////////////
 
     struct BMPINFOHEADER
@@ -1118,9 +1100,7 @@ template <typename T> class TBitmap : public TCPUArray<T>
     };
     //////////////////////////////////////////////////////////////////////////
 
-#pragma pack(pop)
-
-#pragma pack(push,1)
+#pragma pack(1)
 
     struct RGB4
     {
@@ -1214,6 +1194,7 @@ public:
 
     void load(pcchar pszFile, bool bGrayScale = false)
     {
+
         m_bGrayScale = bGrayScale;
         m_file.open(pszFile, ios::binary);
         if(!m_file.is_open())
@@ -1247,7 +1228,7 @@ public:
         int w = this->width(), h = this->height();
         if(bGrayScale)
         {
-            T3DArr<T> p(this->data());
+            T3DView<T> p(this->data());
             for(int y = h - 1; y >= 0; --y)
             {
                 for(int x = 0 ; x < w; ++x)
@@ -1269,7 +1250,7 @@ public:
         }
         else
         {
-            T3DArr<T> p(this->data());
+            T3DView<T> p(this->data());
             for(int y = h - 1; y >= 0; --y)
             {
                 for(int x = 0 ; x < w; ++x)
@@ -1301,7 +1282,7 @@ public:
 
         if(bGrayScale)
         {
-            T3DArr<T> p(this->data());
+            T3DView<T> p(this->data());
             for(int y = this->height() - 1; y >= 0; --y)
             {
                 for(int x = 0 ; x < this->width(); ++x)
@@ -1319,7 +1300,7 @@ public:
         }
         else
         {
-            T3DArr<T> p(this->data());
+            T3DView<T> p(this->data());
 
             if(this->depth() == 1)
             {
@@ -1363,7 +1344,7 @@ public:
     // Override default copy ctor
     explicit TBitmap(const TBitmap &that)
     {
-        assign(that);
+        assign(&that);
         initHeader();
     }
     //////////////////////////////////////////////////////////////////////////
@@ -1371,7 +1352,7 @@ public:
     explicit TBitmap(const TArray<T> &that)
     {
         resizeIfValid(that.dims());
-        assign(that);
+        assign(&that);
         initHeader();
     }
     //////////////////////////////////////////////////////////////////////////
@@ -1379,7 +1360,7 @@ public:
     // Override default = operator
     void operator=(const TBitmap &that)
     {
-        assign(that);
+        assign(&that);
         initHeader();
     }
     //////////////////////////////////////////////////////////////////////////
@@ -1388,7 +1369,7 @@ public:
     void operator=(const TArray<T> &that)
     {
         resizeIfValid(that.dims());
-        assign(that);
+        assign(&that);
         initHeader();
     }
     //////////////////////////////////////////////////////////////////////////    
@@ -1396,18 +1377,73 @@ public:
 };
 //////////////////////////////////////////////////////////////////////////
 
-template<class T> GPU_CPU void clampval(T &val, T mn, T mx)
-{
-    if(val < mn) 
-        val = mn;
-    else if(val > mx)
-         val = mx;
-}
-//////////////////////////////////////////////////////////////////////////
-
 void applyImageFilter(TArray<float> &pDataIn, TArray<float> &pDataOut, TArray<float> &pFilter);
 
 void applyImageFilterFast(TArray<float> &pDataIn, TArray<float> &pDataOut, TArray<float> &pTemp, TArray<float> &pFilterSeparable);
+
+#define getLinearThreadIndex(n) \
+    int nBlock =                                                     \
+    blockIdx.z * (gridDim.x * gridDim.y) +                       \
+    blockIdx.y * (gridDim.x) +                                   \
+    blockIdx.x;                                                  \
+    n =                                                         \
+    nBlock * (blockDim.x * blockDim.y * blockDim.z) +            \
+    threadIdx.z * (blockDim.x * blockDim.y) +                    \
+    threadIdx.y * (blockDim.x) +                                 \
+    threadIdx.x;                                                 
+
+
+//#define getThreadX(nMax) (getLinearThreadIndex() % nMax);
+
+#define getThreadXY(pt, w, h)       \
+    {                               \
+    int nThread;                    \
+    getLinearThreadIndex(nThread);  \
+    pt.x = nThread % w;             \
+    pt.y = (nThread /  w) % h;      \
+    }
+
+#define getThreadXYZ(pt, w, h, d)               \
+{                                               \
+    int nThread = getLinearThreadIndex();       \
+    pt.x = nThread % w;                         \
+    pt.y = (nThread / w) % h;                   \
+    pt.z = (nThread / (w * h) ) % d;            \
+}
+
+#define clampval(val, mn, mx) { if(val < mn) val = mn; else if(val > mx) val = mx;}
+//////////////////////////////////////////////////////////////////////////
+
+#define getBlockGridSizes(nElems, nBlocks, nThreadsPerBlock)        \
+{                                                                   \
+    if((nElems) < g_devProps.multiProcessorCount * 8)               \
+    {                                                               \
+        nThreadsPerBlock = nElems;                                  \
+        nBlocks = 1;                                                \
+    }                                                               \
+    else                                                            \
+    {                                                               \
+        nBlocks = g_devProps.multiProcessorCount;                   \
+        nThreadsPerBlock = nElems / g_devProps.multiProcessorCount; \
+                                                                    \
+        if(nThreadsPerBlock > g_devProps.maxThreadsPerBlock)        \
+        {                                                           \
+            nThreadsPerBlock = g_devProps.maxThreadsPerBlock;       \
+            nBlocks = nElems / nThreadsPerBlock;                    \
+        }                                                           \
+                                                                    \
+        while((nThreadsPerBlock * nBlocks) < (nElems))              \
+        {                                                           \
+            if(nThreadsPerBlock == g_devProps.maxThreadsPerBlock)   \
+                nBlocks++;                                          \
+            else                                                    \
+                nThreadsPerBlock++;                                 \
+        }                                                           \
+        if(nThreadsPerBlock * nBlocks > g_devProps.maxGridSize[0] * g_devProps.maxThreadsDim[0]) throw string("Too many threads for kernel to execute!");\
+    }                                                               \
+}                                                                   
+//////////////////////////////////////////////////////////////////////////
+
 
 #endif //__CUDALIB_H__
 

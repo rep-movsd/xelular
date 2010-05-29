@@ -15,8 +15,12 @@ using namespace std;
 #include "cudalib.h"
 
 #ifdef USEGL
+    #define GLUT_DISABLE_ATEXIT_HACK 1
     #include <glut.h>
-#include <windows.h>
+    #ifdef _MSC_VER
+        #include <windows.h>
+    #endif
 #endif
+
 
 #endif //__PCH_H__

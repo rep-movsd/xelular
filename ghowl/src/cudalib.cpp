@@ -1,11 +1,15 @@
 #include "cudalib.h"
 
+TCudaDeviceProp g_devProps;
+TCudaException g_e;
+
 #ifndef REGION_CUDA_EMU_
 
 #ifndef __CUDACC__
 
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <map>
 using std::map;
 
@@ -16,7 +20,6 @@ using std::map;
 dim3 threadIdx, blockIdx, blockDim, gridDim;
 const int g_iAlign = 256;
 map<void*, void*> g_AlignedPtrs;
-TCudaException g_e;
 
 //void __syncthreads()
 //{
@@ -48,14 +51,14 @@ cudaError_t cudaMalloc(void**p, dword iSize)
 {
     *p = calloc(1, iSize);
     //    cerr << "Allocated(" << int(*p) << ")" << endl;
-    return 0;
+    return p ? 0 : 2;
 }
 //////////////////////////////////////////////////////////////////////////
 
 cudaError_t cudaHostAlloc(void **p, dword iSize, dword flags)
 {
     *p = calloc(1, iSize);
-    return 0;
+    return p ? 0 : 2;
 }
 //////////////////////////////////////////////////////////////////////////
 
@@ -85,6 +88,8 @@ cudaError_t cudaMallocPitch(void **devPtr, dword *pitch, dword w, dword h)
     // Allocate extra bytes so that the buffer pointer can be aligned
     dword cbBuf = *pitch * h + g_iAlign;
     *devPtr = calloc(1, cbBuf);
+    if(!*devPtr)
+        return 2;
 
     // Ensure buffer pointer is a multiple of align and >= width
     int iAligned = getAlignedValue(int(*devPtr));
@@ -197,6 +202,39 @@ cudaError_t cudaThreadSynchronize()
 }
 //////////////////////////////////////////////////////////////////////////
 
+cudaError_t cudaGetDeviceProperties(cudaDeviceProp* prop, int iDev)
+{
+    strcpy(prop->name, "GeForce GTX 285");   ///< ASCII string identifying device
+    prop->totalGlobalMem = 256 * 1048576;   ///< Global memory available on device in bytes
+    prop->sharedMemPerBlock = 16384;        ///< Shared memory available per block in bytes
+    prop->regsPerBlock = 16384;             ///< 32-bit registers available per block
+    prop->warpSize = 32;                    ///< Warp size in threads
+    prop->memPitch = 262144;                ///< Maximum pitch in bytes allowed by memory copies
+    prop->maxThreadsPerBlock = 512;         ///< Maximum number of threads per block
+    prop->maxThreadsDim[0] = 512;                 ///< Maximum size of each dimension of a block
+    prop->maxThreadsDim[1] = 512;                 ///< Maximum size of each dimension of a block
+    prop->maxThreadsDim[2] = 64;                 ///< Maximum size of each dimension of a block
+
+
+    prop->maxGridSize[0] = 65536;                   ///< Maximum size of each dimension of a grid
+    prop->maxGridSize[1] = 65536;                   ///< Maximum size of each dimension of a grid
+    prop->maxGridSize[2] = 1;                   ///< Maximum size of each dimension of a grid
+
+    prop->clockRate;                        ///< Clock frequency in kilohertz
+    prop->totalConstMem = 65536;            ///< Constant memory available on device in bytes
+    prop->major = 1;                        ///< Major compute capability
+    prop->minor = 3;                        ///< Minor compute capability
+    prop->textureAlignment = 256;           ///< Alignment requirement for textures
+    prop->deviceOverlap = 1;                ///< Device can concurrently copy memory and execute a kernel
+    prop->multiProcessorCount = 30;         ///< Number of multiprocessors on device
+    prop->kernelExecTimeoutEnabled = 1;     ///< Specified whether there is a run time limit on kernels
+    prop->integrated = 0;                   ///< Device is integrated as opposed to discrete
+    prop->canMapHostMemory = 1;             ///< Device can map host memory with cudaHostAlloc/cudaHostGetDevicePointer
+    prop->computeMode = 0;                  ///< Compute mode (See ::cudaComputeMode)
+
+    return 0;
+}
+
 #else
 
 #define CHECK_CUDA(X) g_e.setContext(X) ; g_e = cudaGetLastError()
@@ -214,12 +252,12 @@ cudaError_t cudaThreadSynchronize()
 #endif
 
 // Image filter kernel
-GPU void kApplyImageFilter1D(TPitchPtr dataIn, TPitchPtr dataOut, float *pFilter, int iFilterSize)
+__global__ void kApplyImageFilter1D(TPitchPtr dataIn, TPitchPtr dataOut, float *pFilter, int iFilterSize)
 {
     //T2DClipArr<float> pData(dataIn, 0, dataIn.w - 1, 0, dataIn.h - 1);
-
-    T2DNulledArr<float> pData(dataIn, 0, dataIn.w, 0, dataIn.h);
-    TXY ptThis = getThreadXY(dataIn.w, dataIn.h);
+    T2DDefView<float> pData(dataIn, 0, dataIn.w, 0, dataIn.h);
+    TXY ptThis;
+    getThreadXY(ptThis, dataIn.w, dataIn.h);
 
     // filtersize negative means vertical else horizontal
     bool bVertical = false;
@@ -263,19 +301,20 @@ GPU void kApplyImageFilter1D(TPitchPtr dataIn, TPitchPtr dataOut, float *pFilter
     float val = sum / count;
     clampval(val, 0.0f, 255.0f);
 
-    T2DArr<float> pDataOut(dataOut);
+    T2DView<float> pDataOut(dataOut);
     pDataOut[ptThis] = val;
 }
 //////////////////////////////////////////////////////////////////////////
 
 
 // Image filter kernel
-GPU void kApplyImageFilter(TPitchPtr dataIn, TPitchPtr dataOut, TPitchPtr filter)
+__global__ void kApplyImageFilter(TPitchPtr dataIn, TPitchPtr dataOut, TPitchPtr filter)
 {
-    T2DArr<float> pFilter(filter);
-    T2DNulledArr<float> pData(dataIn, 0, dataIn.w, 0, dataIn.h);
+    T2DView<float> pFilter(filter);
+    T2DDefView<float> pData(dataIn, 0, dataIn.w, 0, dataIn.h);
 
-    TXY ptThis = getThreadXY(dataIn.w, dataIn.h);
+    TXY ptThis;
+    getThreadXY(ptThis, dataIn.w, dataIn.h);
 
     // Get midpoint of filter matrix
     TXY ptHalf(filter.w, filter.h);
@@ -296,7 +335,7 @@ GPU void kApplyImageFilter(TPitchPtr dataIn, TPitchPtr dataOut, TPitchPtr filter
     float val = sum / count;
     clampval(val, 0.0f, 255.0f);
 
-    T2DArr<float> pDataOut(dataOut);
+    T2DView<float> pDataOut(dataOut);
     pDataOut[ptThis] = val;
 }
 //////////////////////////////////////////////////////////////////////////
@@ -358,6 +397,7 @@ std::string TCudaException::errorMessage( int e )
 
 void TCudaException::doThrow() const
 {
+    cerr << message() << endl;
     throw *this;
 }
 //////////////////////////////////////////////////////////////////////////
@@ -390,78 +430,33 @@ void TCudaException::setContext( pcchar sCtx )
 // CUDA thread helpers
 //////////////////////////////////////////////////////////////////////////
 
-// Get the absolute linear identity of a thread
-GPU int getLinearThreadIndex()
+
+
+bool dimsEqual(const cudaExtent &e1, const cudaExtent &e2)
 {
-    int nBlock =
-        blockIdx.z * (gridDim.x * gridDim.y) +
-        blockIdx.y * (gridDim.x) +
-        blockIdx.x;
-
-    int nThread =
-        nBlock * (blockDim.x * blockDim.y * blockDim.z) +
-        threadIdx.z * (blockDim.x * blockDim.y) +
-        threadIdx.y * (blockDim.x) +
-        threadIdx.x;
-
-    return nThread;
+    return e1.width == e2.width && e1.height == e2.height && e1.depth == e2.depth;
 }
 //////////////////////////////////////////////////////////////////////////
 
-GPU int getThreadX(int nMax)
-{
-    return getLinearThreadIndex() % nMax;
-}
-//////////////////////////////////////////////////////////////////////////
-
-// Get the virtual X and Y IDs of a thread given the virtual width and height
-GPU TXY getThreadXY(int w, int h)
-{
-    TXY p;
-    int nThread = getLinearThreadIndex();
-
-    p.x = nThread % w;
-    p.y = (nThread / w) % h;
-    return p;
-}
-//////////////////////////////////////////////////////////////////////////
-
-GPU TXYZ getThreadXYZ(int w, int h, int d)
-{
-    TXYZ p;
-    int nThread = getLinearThreadIndex();
-
-    p.x = nThread % w;
-    p.y = (nThread / w) % h;
-    p.z = (nThread / (w * h) ) % d;
-    return p;
-}
-//////////////////////////////////////////////////////////////////////////
-
-void getBlockGridSizes(int nElems, int &nBlocks, int &nThreadsPerBlock)
-{
-    // Todo get max threads from cuda lib
-    nThreadsPerBlock = 8;
-    nBlocks = nElems / nThreadsPerBlock;
-    if(nElems % nThreadsPerBlock) nBlocks++;
-}
-//////////////////////////////////////////////////////////////////////////
 
 void applyImageFilter(TArray<float> &pDataIn, TArray<float> &pDataOut, TArray<float> &pFilter)
 {
     ENSURE_THAT(pFilter.data().bOnDevice == pDataIn.data().bOnDevice, "Filter and input data matrix must reside on device xor host memory");
     ENSURE_THAT(pFilter.data().bOnDevice == pDataOut.data().bOnDevice, "Filter and output data matrix must reside on device xor host memory");
     ENSURE_THAT(pFilter.getShape() == 2 && pDataIn.getShape() == 2 && pDataOut.getShape() == 2, "Filters and data matrix must be 2 dimensional");
-    ENSURE_THAT(pDataIn.dims() == pDataOut.dims(), "Filters and data matrix must be 2 dimensional");
+    ENSURE_THAT(dimsEqual(pDataIn.dims(), pDataOut.dims()), "Filters and data matrix must be 2 dimensional");
 
     int nElems = pDataIn.height() * pDataIn.width();
     int nBlocks, nThreads;
     getBlockGridSizes(nElems, nBlocks, nThreads);
+
+    g_e.setContext("kApplyImageFilter");
     KERNEL_1D_GRID_1D(kApplyImageFilter, nBlocks, nThreads)(pDataIn.data(), pDataOut.data(), pFilter.data());
     g_e = cudaThreadSynchronize();
     
 }
 //////////////////////////////////////////////////////////////////////////
+
 
 void applyImageFilterFast(TArray<float> &pDataIn, TArray<float> &pDataOut, TArray<float> &pTemp, TArray<float> &pFilter)
 {
@@ -470,19 +465,25 @@ void applyImageFilterFast(TArray<float> &pDataIn, TArray<float> &pDataOut, TArra
     ENSURE_THAT(pFilter.data().bOnDevice == pTemp.data().bOnDevice, "Filter and temp data matrix must reside on device xor host memory");
 
     ENSURE_THAT(pFilter.getShape() == 2 && pDataIn.getShape() == 2 && pDataOut.getShape() == 2, "Filters and data matrix must be 2 dimensional");
-    ENSURE_THAT(pDataIn.dims() == pDataOut.dims(), "Filters and data matrix must be 2 dimensional");
+    ENSURE_THAT(dimsEqual(pDataIn.dims(), pDataOut.dims()), "Filters and data matrix must be 2 dimensional");
     ENSURE_THAT(pFilter.height() == 2 && pDataIn.getShape() == 2 && pDataOut.getShape() == 2, "Filters and data matrix must be 2 dimensional");
 
     int nElems = pDataIn.height() * pDataIn.width();
     int nBlocks, nThreads;
     getBlockGridSizes(nElems, nBlocks, nThreads);
 
-    T2DArr<float> pArrFilter(pFilter.data());
+    cerr << "kernel " << nBlocks << " x " << nThreads << endl;
 
+    T2DView<float> pArrFilter(pFilter.data());
+
+    g_e.setContext("kApplyImageFilter1D_1");
     KERNEL_1D_GRID_1D(kApplyImageFilter1D, nBlocks, nThreads)(pDataIn.data(), pTemp.data(), pArrFilter[0], -pFilter.width());
     g_e = cudaThreadSynchronize();
 
+    g_e.setContext("kApplyImageFilter1D_2");
     KERNEL_1D_GRID_1D(kApplyImageFilter1D, nBlocks, nThreads)(pTemp.data(), pDataOut.data(), pArrFilter[1], pFilter.width());
     g_e = cudaThreadSynchronize();
 }
 //////////////////////////////////////////////////////////////////////////
+
+

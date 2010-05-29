@@ -53,19 +53,19 @@ __device__  void kEvolve(TMany<6, TXel> &nears, TXel &xel);
 __device__ void kMovement(int i);
 __device__ void kInterpolate(int i);
 __device__ void kMergeOccupiedSets(int i);
-__device__ void kMigratePoints(int i, bool bMoveIntoOccupied);
+//__device__ void kMigratePoints(int i, bool bMoveIntoOccupied);
 
 #define DECL_MOVEMENT_KERNEL(X)         __global__ void kMovement##X() {kMovement(X);}
 #define DECL_INTERPOLATE_KERNEL(X)      __global__ void kInterpolate##X() {kInterpolate(X);}
 #define DECL_MERGE_KERNEL(X)            __global__ void kMergeOccupiedSets##X() {kMergeOccupiedSets(X);}
-#define DECL_MIGRATE_EMPTY_KERNEL(X)    __global__ void kMigratePointsEmpty##X() {kMigratePoints(X, false);}
+//#define DECL_MIGRATE_EMPTY_KERNEL(X)    __global__ void kMigratePointsEmpty##X() {kMigratePoints(X, false);}
 #define DECL_MIGRATE_OCC_KERNEL(X)      __global__ void kMigratePointsOcc##X() {kMigratePoints(X, true);}
 
 DECL_9(DECL_MOVEMENT_KERNEL);
 DECL_9(DECL_INTERPOLATE_KERNEL);
 DECL_9(DECL_MERGE_KERNEL);
-DECL_9(DECL_MIGRATE_EMPTY_KERNEL);
-DECL_9(DECL_MIGRATE_OCC_KERNEL);
+//DECL_9(DECL_MIGRATE_EMPTY_KERNEL);
+//DECL_9(DECL_MIGRATE_OCC_KERNEL);
 
 
 #include "xelmovement.cc"
@@ -192,6 +192,7 @@ TProfileHelper p;
 // Open GL handling functions
 //////////////////////////////////////////////////////////////////////////
 
+
 void oglDraw()
 {
     g_pXels->oglDraw();
@@ -245,6 +246,8 @@ void initOpenGL(TXel2D &xels, int w, int h)
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
     glutInitWindowSize(fWidth + fPadR + fPadL, fHeight + fPadV * 2);
     glutCreateWindow("Curve Dynamics - 2D");
+
+    glutSetCursor(GLUT_CURSOR_FULL_CROSSHAIR);
 
     //glutSetCursor(GLUT_CURSOR_CROSSHAIR);
     gluOrtho2D(-fPadL, fPadR + fWidth, fHeight + fPadV, -fPadV);
@@ -601,13 +604,13 @@ void TXel2D::init(int w, int h, int nEdgePels)
         m_PointSet[i].clear();
 
     m_nGens = 0;
-    m_fMajor = nEdgePels;
+    m_fMajor = float(nEdgePels);
     m_fMinor = m_fMajor * SIN60;
 
     g_e = cudaMemcpyToSymbol((const char*)&g_fMinor, &m_fMinor, sizeof(float), 0, cudaMemcpyHostToDevice);
     g_e = cudaMemcpyToSymbol((const char*)&g_fMajor, &m_fMajor, sizeof(float), 0, cudaMemcpyHostToDevice);
 
-    m_pArr = T2DArr<TXel>(m_CPUXels.data());
+    m_pArr = T2DView<TXel>(m_CPUXels.data());
 
     if(g_bOnCUDA)
     {
@@ -641,7 +644,7 @@ void TXel2D::loadImage(const string &sImageFile, int nEdgePels)
     // calculate hex grid size and initialize
     TFXY ptfImgSize(m_Img.width(), m_Img.height());
 
-    float fMajor = nEdgePels;
+    float fMajor = float(nEdgePels);
     float fMinor = fMajor * SIN60;
 
     TXY ptMax = getPQ(ptfImgSize, fMinor, fMajor) + TXY(2, 2);
@@ -660,7 +663,7 @@ void TXel2D::load(const string &sFile)
     string sLine;
 
     if(!ifs.is_open())
-        throw string("Cannot open file '") +sFile + string("'");
+        throw string("Cannot open file '") + sFile + string("'");
 
     // Read dimensions and xel display size
     int w, h, n;
@@ -773,7 +776,7 @@ void TXel2D::oglDraw()
     float ex, ey; // represents the coordinate with the lowest x, y along the edge of the xels
 
     // Wipe the canvas
-    glClearColor(0, 0, 0, 0);
+    glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
 
     if(!m_bEvolving)
@@ -798,10 +801,22 @@ void TXel2D::oglDraw()
             {
                 glPolygonMode(GL_FRONT , xel.state0 ? GL_FILL : GL_LINE);
                 TGLGroup gl(GL_POLYGON, xel.state0 ? 0 : 1, 1, 0, xel.state0 ? 0.4 : 0.2);
+
+//                 if(rx == x && ry == y)
+//                     glPolygonMode(GL_FRONT, GL_FILL);
+//                 else
+//                     glPolygonMode(GL_FRONT, GL_LINE);
+//                TGLGroup gl(GL_POLYGON, 1, 1, 0, 0.2);
                 FOR(i, 6)
                     glVertex2f(ex + hexX[i], ey + hexY[i]);
             }
         }
+
+//         char s[256];
+//         sprintf(s, "%d, %d -> %f %f", rx, ry, mx, my);
+//         glColor3f(1, 1, 1);
+//         TGLText t(mx + 10, my - 15, 15);
+//         t.writeLn(s);
     }
     else
     {
@@ -911,15 +926,8 @@ void TXel2D::oglMouseMove(int x, int y)
         storeIJK(ptf, m_fMinor, m_fMajor, mi, mj, mk);
         storePQ(mi, mj, mk, rx, ry);
 
-//         char s[256];
-//         sprintf(s, "%d, %d", rx, ry);
+        glutPostRedisplay();
 
-        //cerr << rx << "," << ry << endl;
-
-//         glColor3f(1, 0, 1);
-//         TGLText t(m_iRight + 10, m_iBottom - 15, 15);
-//         t.writeLn(s);
-//         //glutPostRedisplay();
     }
 }
 /////////////////////////////////////////////////////////////////////////
@@ -1172,7 +1180,7 @@ __device__ int kSortUniq(float *p, int count)
                 least = p[i];
                 nLeast = i;
             }
-            else if(compare(least, p[i])==0) // duplicate element, make sure its never selected again as the lowest
+            else if(fabs(least - p[i]) < 0.0001) // duplicate element, make sure its never selected again as the lowest
             {
                 p[i] = infinity;
             }
@@ -1233,14 +1241,15 @@ __device__ void kGetPlaneAndXelOffsets(float p1[3], float p2[3], float *pOutS, i
 __device__ void kInterpolate(int y)
 {
     int *pOccupiedCount = g_pdCounts;
-    int x = getLinearThreadIndex();
+    int x;
+    getLinearThreadIndex(x);
     if(x >= pOccupiedCount[y]) return;
 
     TPitchPtr pXels = g_pdXels;
     TPitchPtr pOccupied = g_pdOcc;
 
     TXY ptThis = pOccupied.p2d<TXY>()[y][x];
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
     TXel &xel = pArr[ptThis];
     TFXY ptfXel = xel.pt1;
 
@@ -1306,13 +1315,15 @@ __device__ void kInterpolate(int y)
 
 //////////////////////////////////////////////////////////////////////////
 
-__device__ void kAddToOccupiedAllIfNot(TXel& xel, TXY &pt, TMany<64, TXY> &pToAdd, int &index)
+__device__ bool kAddToOccupiedAllIfNot(TXel& xel, TXY &pt, TMany<64, TXY> &pToAdd, int &index)
 {
     int iChosen = atomicAdd(&xel.iChosen, 1);
     if(!iChosen)
     {
         pToAdd[index++] = pt;
+        return true;
     }
+    return false;
 }
 //////////////////////////////////////////////////////////////////////////
 
@@ -1320,20 +1331,22 @@ __device__ void kAddToOccupiedAllIfNot(TXel& xel, TXY &pt, TMany<64, TXY> &pToAd
 __device__ void kMergeOccupiedSets(int y)
 {
     int *pOccupiedCount = g_pdCounts;
-    int x = getLinearThreadIndex();
+    int x;
+    getLinearThreadIndex(x);
+
     if(x >= pOccupiedCount[y]) return;
 
     TPitchPtr pXels = g_pdXels;
     TXY *pOccupiedAll = g_pdOccAll;
 
     TXY ptThis = g_pdOcc.p2d<TXY>()[y][x];
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
     TXel &xel = pArr[ptThis];
     TXel tmp;
     tmp = xel;
 
 
-    TMany<6, TXY> &ptInterpolated = xel.ptI;
+    TMany<60, TXY> &ptInterpolated = xel.ptI;
     TXel &xelDest = pArr[tmp.ptNew];
     int numInterpolated = xel.ptI.size; 
     int isLive = tmp.state1 > 0;
@@ -1388,7 +1401,8 @@ __device__ void kMergeOccupiedSets(int y)
 __device__ void kMovement(int y)
 {
     int *pOccupiedCount = g_pdCounts;
-    int x = getLinearThreadIndex();
+    int x;
+    getLinearThreadIndex(x);
     if(x >= pOccupiedCount[y]) return;
 
     TPitchPtr pXels = g_pdXels;
@@ -1397,7 +1411,7 @@ __device__ void kMovement(int y)
     TXY ptThis = pOccupied.p2d<TXY>()[y][x];
 
     // Get the new xel point 
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
     TXel &xel = pArr[ptThis];
 
     // get neighbors
@@ -1419,7 +1433,6 @@ __device__ void kMovement(int y)
     TXel xelNew = xel;
     kEvolve(nears, xelNew);
     xelNew.ptNew = getPQ(xelNew.pt1, g_fMinor, g_fMajor);
-
     xel = xelNew;
 
     if(xelNew.ptNew != ptThis) // moving into another xel
@@ -1428,7 +1441,8 @@ __device__ void kMovement(int y)
 
         int xd = abs(xelNew.ptNew.x - ptThis.x);
         int yd = abs(xelNew.ptNew.y - ptThis.y);
-        assert(xd < 2 && yd < 2);
+        if(xd > 1 || yd > 1)
+            assert(false);
 
         // Change state of dest xel to movable if its empty
         // No thread contention here because the dest xel is not processed in this batch 
@@ -1445,38 +1459,38 @@ __device__ void kMovement(int y)
 //////////////////////////////////////////////////////////////////////////
 
 // Moves xels to a new xel, optionally into occupied once
-__device__ void kMigratePoints(int y, bool bMoveIntoOccupied)
-{
-    int *pOccupiedCount = g_pdCounts;
-    int x = getLinearThreadIndex();
-    if(x >= pOccupiedCount[y]) return;
-
-    TPitchPtr pXels = g_pdXels;
-    TPitchPtr pOccupied = g_pdOcc;
-
-    TXY ptThis = pOccupied.p2d<TXY>()[y][x];
-
-    // Get the new xel point 
-    T2DArr<TXel> pArr(pXels);
-    TXel xel = pArr[ptThis];
-
-    if(xel.ptNew != ptThis) // moving into another xel
-    {
-        TXel dest = pArr[xel.ptNew];
-        if(dest.state0 == xEmpty)
-        {
-            xel.state1 = xEmpty;
-            dest.state1 = xMovable;
-            dest.pt1 = xel.pt1;
-            dest.ptNew = xel.ptNew;
-            pArr[xel.ptNew] = dest;
-        }
-        else if(bMoveIntoOccupied)
-        {
-            xel.state1 = xEmpty;
-        }
-    }
-}
+// __device__ void kMigratePoints(int y, bool bMoveIntoOccupied)
+// {
+//     int *pOccupiedCount = g_pdCounts;
+//     int x = getLinearThreadIndex();
+//     if(x >= pOccupiedCount[y]) return;
+// 
+//     TPitchPtr pXels = g_pdXels;
+//     TPitchPtr pOccupied = g_pdOcc;
+// 
+//     TXY ptThis = pOccupied.p2d<TXY>()[y][x];
+// 
+//     // Get the new xel point 
+//     T2DView<TXel> pArr(pXels);
+//     TXel xel = pArr[ptThis];
+// 
+//     if(xel.ptNew != ptThis) // moving into another xel
+//     {
+//         TXel dest = pArr[xel.ptNew];
+//         if(dest.state0 == xEmpty)
+//         {
+//             xel.state1 = xEmpty;
+//             dest.state1 = xMovable;
+//             dest.pt1 = xel.pt1;
+//             dest.ptNew = xel.ptNew;
+//             pArr[xel.ptNew] = dest;
+//         }
+//         else if(bMoveIntoOccupied)
+//         {
+//             xel.state1 = xEmpty;
+//         }
+//     }
+// }
 //////////////////////////////////////////////////////////////////////////
 
 
@@ -1484,11 +1498,12 @@ __device__ void kMigratePoints(int y, bool bMoveIntoOccupied)
 __global__ void kUpdate()
 {
     int *pOccupiedCount = g_pdCounts;
-    int n = getLinearThreadIndex();
+    int n;
+    getLinearThreadIndex(n);
     if(n >= pOccupiedCount[9]) return;
 
     // Get the new xel point 
-    T2DArr<TXel> pArr(g_pdXels);
+    T2DView<TXel> pArr(g_pdXels);
     TXel &xel = pArr[g_pdOccAll[n]];
 
     // Set the old state and x,y to the new state 
@@ -1501,7 +1516,8 @@ __global__ void kUpdate()
 __global__ void kClearOccupiedArr()
 {
     int *pOccupiedCount = g_pdCounts;
-    int n = getLinearThreadIndex();
+    int n;
+    getLinearThreadIndex(n);
     if(n > 8) return;
     pOccupiedCount[n] = 0;
 }
@@ -1512,7 +1528,8 @@ __global__ void kClearOccupiedArr()
 __global__ void kDivideOccupiedSets()
 {
     int *pOccupiedCount = g_pdCounts;
-    int n = getLinearThreadIndex();
+    int n;
+    getLinearThreadIndex(n);
     if(n >= pOccupiedCount[9]) return;
 
     TXY *pOccupiedAll = g_pdOccAll;
@@ -1522,23 +1539,10 @@ __global__ void kDivideOccupiedSets()
     int y = ptMod.y * 3 + ptMod.x;
     int x = atomicAdd(&pOccupiedCount[y], 1);
 
-    T2DArr<TXY> pArr(g_pdOcc);
+    T2DView<TXY> pArr(g_pdOcc);
     pArr[y][x] = pt;
-
-    //cerr /**/ << pt.x << "," << pt.y << " ";
 }
 //////////////////////////////////////////////////////////////////////////
 
 
 #endif
-
-
-// void dumpXel(TXel &xel, TXY pt)
-// {
-//     cerr << pt.x << "," << pt.y << endl;
-//     cerr << "------------" << endl;
-//     cerr << xel.pt0.x << "," << xel.pt0.y <<endl;
-//     cerr << xel.pt1.x << "," << xel.pt1.y <<endl;
-//     cerr << xel.state0 << endl;
-//     cerr << xel.state1 << endl << endl;
-// }

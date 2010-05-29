@@ -11,16 +11,17 @@ GPU_CPU TFXY getXelCenterXY(TXY &pt, float fMin, float fMaj);
 __global__ void kAssignFixedPoints()
 {
     TPitchPtr pXels = g_pdXels;
-    TXY ptThis = getThreadXY(pXels.w, pXels.h);
+    TXY ptThis;
+    getThreadXY(ptThis, pXels.w, pXels.h);
 
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
 
     if(ptThis.x > 2 && ptThis.x < pXels.w - 2 && ptThis.y > 2 && ptThis.y < pXels.h - 2)
     {
         TXel &xel = pArr[ptThis];
         if(xel.fIntensity > 0.1f)
         {
-            xel.state0 = xel.fIntensity > 0.5f ? xFixed : xMovable;
+            xel.state0 = /*xel.fIntensity > 0.5f ? xFixed : */xMovable;
             xel.pt0 = getXelCenterXY(ptThis, g_fMinor, g_fMajor);
             xel.iImgForce = 0;
         }
@@ -31,9 +32,10 @@ __global__ void kAssignFixedPoints()
 __global__ void kAssignForce(int iForceIndex)
 {
     TPitchPtr pXels = g_pdXels;
-    TXY ptThis = getThreadXY(pXels.w, pXels.h);
+    TXY ptThis;
+    getThreadXY(ptThis, pXels.w, pXels.h);
 
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
     if(ptThis.x > 2 && ptThis.x < pXels.w - 2 && ptThis.y > 2 && ptThis.y < pXels.h - 2)
     {
         TXel &xel = pArr[ptThis];
@@ -60,9 +62,10 @@ __global__ void kAssignForce(int iForceIndex)
 __global__ void kAssignForceVector()
 {
     TPitchPtr pXels = g_pdXels;
-    TXY ptThis = getThreadXY(pXels.w, pXels.h);
+    TXY ptThis;
+    getThreadXY(ptThis, pXels.w, pXels.h);
 
-    T2DArr<TXel> pArr(pXels);
+    T2DView<TXel> pArr(pXels);
     if(ptThis.x > 2 && ptThis.x < pXels.w - 2 && ptThis.y > 2 && ptThis.y < pXels.h - 2)
     {
         TXel &xel = pArr[ptThis];
@@ -98,10 +101,10 @@ struct TXelImg
         // Simply fill each xel with the scaled intensity of the image
 
         TBitmap<byte> &bmp = xels.m_Img;
-        T2DArr<byte> pBmp(bmp.data());
+        T2DView<byte> pBmp(bmp.data());
         int w = xels.m_CPUXels.width(), h = xels.m_CPUXels.height();
         float fMaj = xels.m_fMajor, fMin = xels.m_fMinor;
-        T2DArr<TXel> &pArr = xels.m_pArr;
+        T2DView<TXel> &pArr = xels.m_pArr;
 
         // The friction is proportional to the average image intensity in the xel
         LOOP_YX(bmp.width(), bmp.height())
@@ -126,7 +129,7 @@ struct TXelImg
         KERNEL_1D_GRID_1D(kAssignFixedPoints, nBlocks, nThreads)();
 
         // Assign image force indexes
-        FOR(iImgForce, 2)
+        FOR(iImgForce, 4)
         {
             KERNEL_1D_GRID_1D(kAssignForce, nBlocks, nThreads)(iImgForce);
         }
