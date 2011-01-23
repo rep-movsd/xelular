@@ -12,14 +12,12 @@
 #include <set>
 using namespace std;
 
-#include "cudalib.h"
+#include "ghowl.h"
+
 
 #ifdef USEGL
-    #define GLUT_DISABLE_ATEXIT_HACK 1
-    #include <glut.h>
-    #ifdef _MSC_VER
-        #include <windows.h>
-    #endif
+    #include <windows.h>
+    #include <GL/glut.h>
 #endif
 
 

@@ -1,6 +1,6 @@
-GPU TFXY kGetIntrinsicForce(TMany<6, TXel> &nears, TXel &xel)
+GPU TFXY kGetIntrinsicForce(TMany<6, TXel> &nears, TXel &xel, TFXY &ptfMean)
 {
-    TFXY ptfMean;
+    
     TMany<6, TFXY> dists;
 
     // Get mean point
@@ -46,27 +46,34 @@ GPU TFXY kGetIntrinsicForce(TMany<6, TXel> &nears, TXel &xel)
 //Calculates the new point for the given xel based on the inertial tensor rule
 GPU void kEvolve(TMany<6, TXel> &nears, TXel &xel)
 {
-    TFXY old = xel.pt0;
     xel.pt1 = xel.pt0;
-
-    if(nears.size && xel.state0 == xMovable)
+    
+    if(nears.size && xel.state0 == xsMovable)
     {
-        TFXY ptfIntrinsic = kGetIntrinsicForce(nears, xel);
-        //TFXY ptfImgForce = xel.ptfImgForce * g_fMinor;
+        TFXY ptfMean;
+
+//         int n = nGens / 20;
+//         if(n > 9) n = 9;
+        T2DView<TFXY> pImgForces(g_pdImgForce);
+
+        TFXY ptfIntrinsic = kGetIntrinsicForce(nears, xel, ptfMean);
+        TFXY ptfImgForce = pImgForces[(int)xel.pt0.y][(int)xel.pt0.x] * g_fMinor;
 
         //Take only radial component of image force
         // as f = (f.v / v.v) * v
+        if(nears.size > 1)
+        {
+            float vv = ptfIntrinsic.dot(ptfIntrinsic) + 0.01f;
+            float fv = ptfImgForce.dot(ptfIntrinsic);
+            ptfImgForce = ptfIntrinsic * (fv / vv);
+        }
 
-//         float vv = ptfIntrinsic.dot(ptfIntrinsic) + 0.1f;
-//         float fv = ptfImgForce.dot(ptfIntrinsic);
-//         ptfImgForce = ptfIntrinsic * (fv / vv);
+        //if(xel.fIntensity > 0.1) ptfImgForce = TFXY() - ptfImgForce;
 
-        TFXY ptfTotal = ptfIntrinsic;// * 0.1f;// + ptfImgForce * 0.1f;
+        TFXY ptfTotal = ((ptfIntrinsic * 0.1f) + (ptfImgForce * 0.01));
+        
         xel.pt1 += ptfTotal;
     }
-
-    assert(old == xel.pt0);
-
 
 }
 //////////////////////////////////////////////////////////////////////////
